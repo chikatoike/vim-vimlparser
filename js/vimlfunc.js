@@ -34,7 +34,7 @@ var pat_vim2js = {
   "\\w" : "[0-9A-Za-z_]",
   "\\w\\|[:#]" : "[0-9A-Za-z_]|[:#]",
   "\\x" : "[0-9A-Fa-f]",
-  "^++" : "^\+\+",
+  "^++" : "^\\+\\+",
   "^++bad=\\(keep\\|drop\\|.\\)\\>" : "^\\+\\+bad=(keep|drop|.)\\b",
   "^++bad=drop" : "^\\+\\+bad=drop",
   "^++bad=keep" : "^\\+\\+bad=keep",
@@ -90,17 +90,17 @@ function viml_equalci(a, b) {
 }
 
 function viml_eqreg(s, reg) {
-    var mx = new RegExp(pat_vim2js[reg]);
+    var mx = new RegExp(_vimlregex_to_jsregex(reg, s));
     return mx.exec(s) != null;
 }
 
 function viml_eqregh(s, reg) {
-    var mx = new RegExp(pat_vim2js[reg]);
+    var mx = new RegExp(_vimlregex_to_jsregex(reg, s));
     return mx.exec(s) != null;
 }
 
 function viml_eqregq(s, reg) {
-    var mx = new RegExp(pat_vim2js[reg], "i");
+    var mx = new RegExp(_vimlregex_to_jsregex(reg, s), "i");
     return mx.exec(s) != null;
 }
 
@@ -213,3 +213,92 @@ function viml_type(obj) {
   throw 'Unknown Type';
 }
 
+function viml_matchstr(s, reg) {
+    // var mx = new RegExp(reg);
+    var mx = new RegExp(_vimlregex_to_jsregex(reg, s));
+    return mx.exec(s);
+}
+
+function viml_index(list, expr /*, start, ic*/) {
+    var idx = arguments.length >= 3 ? arguments[2] : 0;
+    // TODO: ic
+    return list.indexOf(expr, idx);
+}
+
+
+var regex_class_vim2js = {
+  "\\v" : "",
+  "\\S" : "\\S",
+  "\\a" : "[A-Za-z]",
+  "\\d" : "\\d",
+  "\\h" : "[A-Za-z_]",
+  "\\s" : "\\s",
+  "\\w" : "[0-9A-Za-z_]",
+  "\\x" : "[0-9A-Fa-f]",
+  "\\<" : "\\b",
+  "\\>" : "\\b",
+  "\\?" : "?",
+  "\\=" : "?",
+  "\\*" : "*",
+  "\\+" : "+",
+  "+"   : "\\+",
+  "("   : "\\(",
+  ")"   : "\\)",
+  "\\\\"  : "\\\\",
+  // "\\." : "\\.",
+  "\\." : ".",
+  "\\{}" : "*",
+  "\\{-}" : "*?",
+  "\\%(" : "(", // TODO
+  "\\(" : "(",
+  "\\)" : ")",
+  "\\|" : "|",
+  "\\^" : "^",
+  "\\$" : "$"
+};
+
+var re_atom_array = new RegExp("^\\\\%\\[(.*)\\]$");
+// console.log(re_atom_array.exec("\\%[elete]")[1]);
+
+function regex_token_convert(token) {
+    if (regex_class_vim2js[token] !== undefined) {
+        return regex_class_vim2js[token];
+    }
+    else if (re_atom_array.exec(token)) {
+        // \%[abc] -> (abc|ab|a)
+        var atom = re_atom_array.exec(token)[1];
+        var patterns = atom.split('').reduce(function(prev, current) {
+            if (prev.length === 0)
+                prev.unshift(current);
+            else
+                prev.unshift(prev[0] + current);
+            return prev;
+        }, []);
+        return '(' + patterns.join('|') + ')';
+    }
+    else if (token.indexOf('\\[') === 0) {
+        return token.slice(1);
+    }
+    else if (token.indexOf('\\{') === 0) {
+        return token.slice(1);
+    }
+    else if (token.indexOf('\\') !== 0) {
+        return token;
+    }
+    console.log('not support: ' + token);
+    return token;
+}
+
+var endsWith = function(s, suffix) {
+    var sub = s.length - suffix.length;
+    return (sub >= 0) && (s.lastIndexOf(suffix) === sub);
+};
+
+function _vimlregex_to_jsregex(pattern) {
+    var reader = new StringReader(pattern);
+    var reg = new RegexpParser(reader);
+    var result = reg.parse_regexp();
+    return result.map(regex_token_convert).join("");
+}
+
+exports._vimlregex_to_jsregex = _vimlregex_to_jsregex;

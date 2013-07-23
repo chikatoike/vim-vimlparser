@@ -1,5 +1,17 @@
+command! -nargs=* JsCompilerVimOnly <args>
 
-call extend(s:, vimlparser#import())
+JsCompilerVimOnly call extend(s:, vimlparser#import())
+
+let s:constructor_functions_pattern = join([
+      \ 'VimLParser',
+      \ 'ExprTokenizer',
+      \ 'ExprParser',
+      \ 'LvalueParser',
+      \ 'StringReader',
+      \ 'Compiler',
+      \ 'RegexpParser',
+      \ 'JavascriptCompiler',
+      \ ], '\|')
 
 let s:opprec = {}
 let s:opprec[s:NODE_TERNARY] = 1
@@ -279,7 +291,8 @@ function s:JavascriptCompiler.compile_comment(node)
 endfunction
 
 function s:JavascriptCompiler.compile_excmd(node)
-  throw 'NotImplemented: excmd'
+  call self.out('//%s', a:node.str)
+  " throw 'NotImplemented: excmd'
 endfunction
 
 function s:JavascriptCompiler.compile_function(node)
@@ -290,7 +303,7 @@ function s:JavascriptCompiler.compile_function(node)
     unlet rlist[-1]
     let va = 1
   endif
-  if left =~ '^\(VimLParser\|ExprTokenizer\|ExprParser\|LvalueParser\|StringReader\|Compiler\|RegexpParser\)\.'
+  if left =~ '^\(' . s:constructor_functions_pattern . '\)\.'
     let [_0, klass, name; _] = matchlist(left, '^\(.*\)\.\(.*\)$')
     if name == 'new'
       return
@@ -317,7 +330,9 @@ function s:JavascriptCompiler.compile_function(node)
 endfunction
 
 function s:JavascriptCompiler.compile_delfunction(node)
-  throw 'NotImplemented: delfunction'
+  " throw 'NotImplemented: delfunction'
+  let list = map(a:node.list, 'self.compile(v:val)')
+  call self.out('delete %s;', join(list, ', '))
 endfunction
 
 function s:JavascriptCompiler.compile_return(node)
@@ -344,15 +359,16 @@ function s:JavascriptCompiler.compile_let(node)
       call self.out('function LvalueParser() { ExprParser.apply(this, arguments); this.__init__.apply(this, arguments); }')
       call self.out('LvalueParser.prototype = Object.create(ExprParser.prototype);')
       return
-    elseif left =~ '^\(VimLParser\|ExprTokenizer\|ExprParser\|LvalueParser\|StringReader\|Compiler\|RegexpParser\)$'
+    elseif left =~ '^\(' . s:constructor_functions_pattern . '\)$'
       call self.out('function %s() { this.__init__.apply(this, arguments); }', left)
       return
-    elseif left =~ '^\(VimLParser\|ExprTokenizer\|ExprParser\|LvalueParser\|StringReader\|Compiler\|RegexpParser\)\.'
+    elseif left =~ '^\(' . s:constructor_functions_pattern . '\)\.'
       let [_0, klass, name; _] = matchlist(left, '^\(.*\)\.\(.*\)$')
       call self.out('%s.prototype.%s %s %s;', klass, name, op, right)
       return
     endif
-    if left =~ '\.' || op != '='
+    " TODO use var only in variable decralation.
+    if left =~ '\.' || left =~ '\[' || op != '='
       call self.out('%s %s %s;', left, op, right)
     else
       call self.out('var %s %s %s;', left, op, right)
@@ -375,16 +391,18 @@ function s:JavascriptCompiler.compile_let(node)
       let i += 1
     endwhile
     if a:node.rest isnot s:NIL
-      if rest[i] =~ '\.'
-        call self.out('%s = __tmp.slice(%d);', i)
+      if rest =~ '\.'
+        call self.out('%s = __tmp.slice(%d);', rest, i)
       else
-        call self.out('var %s = __tmp.slice(%d);', i)
+        call self.out('var %s = __tmp.slice(%d);', rest, i)
       endif
     endif
   endif
 endfunction
 
 function s:JavascriptCompiler.compile_unlet(node)
+  " TODO support unlet with slice.
+  " ex. `unlet list[0]` -> list.remove(0)
   let list = map(a:node.list, 'self.compile(v:val)')
   call self.out('delete %s;', join(list, ', '))
 endfunction
@@ -478,13 +496,14 @@ function s:JavascriptCompiler.compile_try(node)
   call self.out('}')
   for node in a:node.catch
     if node.pattern isnot s:NIL
-      call self.out('catch {')
+      " re-throw if pattern not matched..
+      call self.out('catch (e) {')
       call self.incindent('    ')
       call self.compile_body(node.body)
       call self.decindent()
       call self.out('}')
     else
-      call self.out('catch {')
+      call self.out('catch (e) {')
       call self.incindent('    ')
       call self.compile_body(node.body)
       call self.decindent()
@@ -719,7 +738,18 @@ function s:JavascriptCompiler.compile_subscript(node)
 endfunction
 
 function s:JavascriptCompiler.compile_slice(node)
-  throw 'NotImplemented: slice'
+  " throw 'NotImplemented: slice'
+  let r0 = a:node.rlist[0] is s:NIL ? s:NIL : self.compile(a:node.rlist[0])
+  let r1 = a:node.rlist[1] is s:NIL ? s:NIL : self.compile(a:node.rlist[1])
+  if r0 isnot s:NIL && r1 isnot s:NIL
+    return printf('%s.slice(%s, %s)', self.compile(a:node.left), r0, r1)
+  elseif r0 isnot s:NIL && r1 is s:NIL
+    return printf('%s.slice(%s)', self.compile(a:node.left), r0)
+  elseif r0 is s:NIL && r1 isnot s:NIL
+    return printf('%s.slice(0, %s)', self.compile(a:node.left), r1)
+  else
+    return printf('%s.slice(0)', self.compile(a:node.left))
+  endif
 endfunction
 
 function s:JavascriptCompiler.compile_dot(node)
@@ -789,7 +819,15 @@ function s:JavascriptCompiler.compile_dict(node)
 endfunction
 
 function s:JavascriptCompiler.compile_option(node)
-  throw 'NotImplemented: option'
+  " throw 'NotImplemented: option'
+  if stridx(a:node.value, '&g:') == 0
+    " TODO lvalue?
+    return 'Vim.Option.' . a:node.value[3:]
+  elseif stridx(a:node.value, '&l:') == 0
+    return 'Vim.Option.' . a:node.value[3:]
+  else
+    return 'Vim.Option.' . a:node.value[1:]
+  endif
 endfunction
 
 function s:JavascriptCompiler.compile_identifier(node)
@@ -798,8 +836,32 @@ function s:JavascriptCompiler.compile_identifier(node)
     let name = 'a000'
   elseif name == 'v:val'
     let name = 'vval'
+
+  elseif name == 'g:'
+    let name = 'global'
+  elseif name == 's:'
+    let name = 'exports'
+  elseif name == 'a:'
+    " let name = 'callee.arguments'
+    let name = 'arguments'
+
+  elseif name =~ '^v:'
+    let name = 'Vim.DefinedVariables.' . name[2:]
+  elseif name =~ '^t:'
+    let name = 'Vim.TabVar.' . name[2:]
+  elseif name =~ '^w:'
+    let name = 'Vim.WindowVar.' . name[2:]
+  elseif name =~ '^b:'
+    let name = 'Vim.BufferVar.' . name[2:]
+  elseif name =~ '^g:'
+    let name = substitute(name, '#', '$', 'g')
+    let name = 'global.' . name[2:]
+
   elseif name =~ '^[sa]:'
+    " TODO a:var vs l:var
     let name = name[2:]
+  elseif name =~ '#'
+    let name = substitute(name, '#', '$', 'g')
   elseif name == 'self'
     let name = 'this'
   endif
@@ -872,4 +934,8 @@ function! s:numtoname(num)
   return a:num
 endfunction
 
-call s:test()
+" call s:test()
+
+function! JsCompilerImport()
+  return s:
+endfunction

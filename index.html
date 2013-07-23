@@ -1,0 +1,94 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE html>
+<meta http-equiv="Content-Type" content="text/html;charset=utf-8"/>
+<html>
+<head>
+    <title>Vim script to Javascript</title>
+
+    <script src="https://ajax.googleapis.com/ajax/libs/jquery/1.8.0/jquery.min.js"></script>
+    <script type="text/javascript">
+        $(document).ready(function(){
+            $('#translate').click(function() {
+                var src = $('#viml').val().split('\n');
+                console.log(src);
+                var r = new StringReader(src);
+                var p = new VimLParser();
+                // var c = new Compiler();
+                var c = new JavascriptCompiler();
+                var lines = c.compile(p.parse(r));
+                // $('#javascript').text(lines.join('\n'));
+                $('#javascript').html('<p>' + lines.join('<br>') + '</p>');
+            });
+        });
+        function require(module) {
+            var _BITS = { i: 0x8011, d: 0x8011, u: 0x8021, o: 0x8161, x: 0x8261,
+                X: 0x9261, f: 0x92, c: 0x2800, s: 0x84 },
+                _PARSE = /%(?:(\d+)\$)?(#|0)?(\d+)?(?:\.(\d+))?(l)?([%iduoxXfcs])/g;
+            return {
+                // http://d.hatena.ne.jp/uupaa/20091214/1260737607
+                format: function(format) {
+                    function _fmt(m, argidx, flag, width, prec, size, types) {
+                        if (types === "%") { return "%"; }
+                        var v = "", w = _BITS[types], overflow, pad;
+
+                        idx = argidx ? parseInt(argidx) : next++;
+
+                        w & 0x400 || (v = (av[idx] === void 0) ? "" : av[idx]);
+                        w & 3 && (v = (w & 1) ? parseInt(v) : parseFloat(v), v = isNaN(v) ? "": v);
+                        w & 4 && (v = ((types === "s" ? v : types) || "").toString());
+                        w & 0x20  && (v = (v >= 0) ? v : v % 0x100000000 + 0x100000000);
+                        w & 0x300 && (v = v.toString(w & 0x100 ? 8 : 16));
+                        w & 0x40  && (flag === "#") && (v = ((w & 0x100) ? "0" : "0x") + v);
+                        w & 0x80  && prec && (v = (w & 2) ? v.toFixed(prec) : v.slice(0, prec));
+                        w & 0x6000 && (overflow = (typeof v !== "number" || v < 0));
+                        w & 0x2000 && (v = overflow ? "" : String.fromCharCode(v));
+                        w & 0x8000 && (flag = (flag === "0") ? "" : flag);
+                        v = w & 0x1000 ? v.toString().toUpperCase() : v.toString();
+
+                        if (!(w & 0x800 || width === void 0 || v.length >= width)) {
+                          pad = Array(width - v.length + 1).join(!flag ? " " : flag === "#" ? " " : flag);
+                          v = ((w & 0x10 && flag === "0") && !v.indexOf("-"))
+                          ? ("-" + pad + v.slice(1)) : (pad + v);
+                        }
+                        return v;
+                    }
+                    var next = 1, idx = 0, av = arguments;
+
+                    return format.replace(_PARSE, _fmt);
+                }
+            };
+        }
+        var exports = {};
+    </script>
+    <script src="js/jscompiler.js"></script>
+</head>
+<body>
+
+<h2>説明</h2>
+Vim scriptをJavascriptに変換します。
+<ul>
+    <li>Nakadaira Yukihiro さんの <a href="https://github.com/ynkdir/vim-vimlparser">vim-vimlparser</a> に変更を加えたものを使っています</li>
+    <li>いろいろ不完全です</li>
+</ul>
+
+<h2>Vim script</h2>
+<textarea id="viml" cols="50" rows="10">
+function s:func(a, b)
+    let c = a:a + a:b
+    return c
+endfunction
+
+call s:func(1, 2)
+</textarea>
+<br>
+
+<input type="button" value="変換" id="translate">
+
+<h2>Javascript</h2>
+<div id="javascript" style="border-style: solid ; border-width: 1px;"></div>
+
+<!-- 実行結果
+<div id="result" style="border-style: solid ; border-width: 1px;"></div>
+ -->
+</body>
+</html>

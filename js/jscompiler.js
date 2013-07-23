@@ -5040,3 +5040,1375 @@ RegexpParser.prototype.gethexchrs = function(n) {
 
 
 // main()
+//!/usr/bin/env nodejs
+// usage: nodejs vimlparser.js foo.vim
+
+var fs = require('fs');
+var util = require('util');
+
+function main() {
+    var r = new StringReader(viml_readfile(process.argv[2]));
+    var p = new VimLParser();
+    var c = new Compiler();
+    var lines = c.compile(p.parse(r))
+    for (var i in lines) {
+        process.stdout.write(lines[i] + "\n");
+    }
+}
+
+var pat_vim2js = {
+  "[0-9a-zA-Z]" : "[0-9a-zA-Z]",
+  "[@*!=><&~#]" : "[@*!=><&~#]",
+  "\\<ARGOPT\\>" : "\\bARGOPT\\b",
+  "\\<BANG\\>" : "\\bBANG\\b",
+  "\\<EDITCMD\\>" : "\\bEDITCMD\\b",
+  "\\<NOTRLCOM\\>" : "\\bNOTRLCOM\\b",
+  "\\<TRLBAR\\>" : "\\bTRLBAR\\b",
+  "\\<USECTRLV\\>" : "\\bUSECTRLV\\b",
+  "\\<\\(XFILE\\|FILES\\|FILE1\\)\\>" : "\\b(XFILE|FILES|FILE1)\\b",
+  "\\S" : "\\S",
+  "\\a" : "[A-Za-z]",
+  "\\d" : "\\d",
+  "\\h" : "[A-Za-z_]",
+  "\\s" : "\\s",
+  "\\v^d%[elete][lp]$" : "^d(elete|elet|ele|el|e)[lp]$",
+  "\\v^s%(c[^sr][^i][^p]|g|i[^mlg]|I|r[^e])" : "^s(c[^sr][^i][^p]|g|i[^mlg]|I|r[^e])",
+  "\\w" : "[0-9A-Za-z_]",
+  "\\w\\|[:#]" : "[0-9A-Za-z_]|[:#]",
+  "\\x" : "[0-9A-Fa-f]",
+  "^++" : "^\\+\\+",
+  "^++bad=\\(keep\\|drop\\|.\\)\\>" : "^\\+\\+bad=(keep|drop|.)\\b",
+  "^++bad=drop" : "^\\+\\+bad=drop",
+  "^++bad=keep" : "^\\+\\+bad=keep",
+  "^++bin\\>" : "^\\+\\+bin\\b",
+  "^++edit\\>" : "^\\+\\+edit\\b",
+  "^++enc=\\S" : "^\\+\\+enc=\\S",
+  "^++encoding=\\S" : "^\\+\\+encoding=\\S",
+  "^++ff=\\(dos\\|unix\\|mac\\)\\>" : "^\\+\\+ff=(dos|unix|mac)\\b",
+  "^++fileformat=\\(dos\\|unix\\|mac\\)\\>" : "^\\+\\+fileformat=(dos|unix|mac)\\b",
+  "^++nobin\\>" : "^\\+\\+nobin\\b",
+  "^[A-Z]" : "^[A-Z]",
+  "^\\$\\w\\+" : "^\\$[0-9A-Za-z_]+",
+  "^\\(!\\|global\\|vglobal\\)$" : "^(!|global|vglobal)$",
+  "^\\(WHILE\\|FOR\\)$" : "^(WHILE|FOR)$",
+  "^\\(vimgrep\\|vimgrepadd\\|lvimgrep\\|lvimgrepadd\\)$" : "^(vimgrep|vimgrepadd|lvimgrep|lvimgrepadd)$",
+  "^\\d" : "^\\d",
+  "^\\h" : "^[A-Za-z_]",
+  "^\\s" : "^\\s",
+  "^\\s*\\\\" : "^\\s*\\\\",
+  "^[ \\t]$" : "^[ \\t]$",
+  "^[A-Za-z]$" : "^[A-Za-z]$",
+  "^[0-9A-Za-z]$" : "^[0-9A-Za-z]$",
+  "^[0-9]$" : "^[0-9]$",
+  "^[0-9A-Fa-f]$" : "^[0-9A-Fa-f]$",
+  "^[0-9A-Za-z_]$" : "^[0-9A-Za-z_]$",
+  "^[A-Za-z_]$" : "^[A-Za-z_]$",
+  "^[0-9A-Za-z_:#]$" : "^[0-9A-Za-z_:#]$",
+  "^[A-Za-z_][0-9A-Za-z_]*$" : "^[A-Za-z_][0-9A-Za-z_]*$",
+  "^[A-Z]$" : "^[A-Z]$",
+  "^[a-z]$" : "^[a-z]$",
+  "^[vgslabwt]:$\\|^\\([vgslabwt]:\\)\\?[A-Za-z_][0-9A-Za-z_#]*$" : "^[vgslabwt]:$|^([vgslabwt]:)?[A-Za-z_][0-9A-Za-z_#]*$",
+  "^[0-7]$" : "^[0-7]$",
+}
+
+function viml_add(lst, item) {
+    lst.push(item);
+}
+
+function viml_call(func, args) {
+    return func.apply(null, args);
+}
+
+function viml_char2nr(c) {
+  return c.charCodeAt(0);
+}
+
+function viml_empty(obj) {
+    return obj.length == 0;
+}
+
+function viml_equalci(a, b) {
+    return a.toLowerCase() == b.toLowerCase();
+}
+
+function viml_eqreg(s, reg) {
+    var mx = new RegExp(_vimlregex_to_jsregex(reg, s));
+    return mx.exec(s) != null;
+}
+
+function viml_eqregh(s, reg) {
+    var mx = new RegExp(_vimlregex_to_jsregex(reg, s));
+    return mx.exec(s) != null;
+}
+
+function viml_eqregq(s, reg) {
+    var mx = new RegExp(_vimlregex_to_jsregex(reg, s), "i");
+    return mx.exec(s) != null;
+}
+
+function viml_escape(s, chars) {
+    var r = '';
+    for (var i = 0; i < s.length; ++i) {
+        if (chars.indexOf(s.charAt(i)) != -1) {
+            r = r + "\\" + s.charAt(i);
+        } else {
+            r = r + s.charAt(i);
+        }
+    }
+    return r;
+}
+
+function viml_extend(obj, item) {
+    obj.push.apply(obj, item);
+}
+
+function viml_insert(lst, item) {
+    var idx = arguments.length >= 3 ? arguments[2] : 0;
+    lst.splice(0, 0, item);
+}
+
+function viml_join(lst, sep) {
+    return lst.join(sep);
+}
+
+function viml_keys(obj) {
+    return Object.keys(obj);
+}
+
+function viml_len(obj) {
+    return obj.length;
+}
+
+function viml_printf() {
+    var a000 = Array.prototype.slice.call(arguments, 0);
+    if (a000.length == 1) {
+        return a000[0];
+    } else {
+        return util.format.apply(null, a000);
+    }
+}
+
+function viml_range(start) {
+    var end = arguments.length >= 2 ? arguments[1] : null;
+    if (end == null) {
+        var x = [];
+        for (var i = 0; i < start; ++i) {
+            x.push(i);
+        }
+        return x;
+    } else {
+        var x = []
+        for (var i = start; i <= end; ++i) {
+            x.push(i);
+        }
+        return x;
+    }
+}
+
+function viml_readfile(path) {
+    // FIXME: newline?
+    return fs.readFileSync(path, 'utf-8').split(/\r\n|\r|\n/);
+}
+
+function viml_remove(lst, idx) {
+    lst.splice(idx, 1);
+}
+
+function viml_split(s, sep) {
+    if (sep == "\\zs") {
+        return s.split("");
+    }
+    throw "NotImplemented";
+}
+
+function viml_str2nr(s) {
+    var base = arguments.length >= 2 ? arguments[1] : 10;
+    return parseInt(s, base);
+}
+
+function viml_string(obj) {
+    return obj.toString();
+}
+
+function viml_has_key(obj, key) {
+    return obj[key] !== undefined;
+}
+
+function viml_stridx(a, b) {
+    return a.indexOf(b);
+}
+
+function viml_type(obj) {
+  if (typeof obj == 'number' && Math.round(obj) == obj) {
+    return 0;
+  } else if (typeof obj == 'string') {
+    return 1;
+  } else if (typeof obj == 'function') {
+    return 2;
+  } else if (obj instanceof Array) {
+    return 3;
+  } else if (obj instanceof Object) {
+    return 4;
+  } else if (typeof obj == 'number') {
+    return 5;
+  }
+  throw 'Unknown Type';
+}
+
+function viml_matchstr(s, reg) {
+    // var mx = new RegExp(reg);
+    var mx = new RegExp(_vimlregex_to_jsregex(reg, s));
+    return mx.exec(s);
+}
+
+function viml_index(list, expr /*, start, ic*/) {
+    var idx = arguments.length >= 3 ? arguments[2] : 0;
+    // TODO: ic
+    return list.indexOf(expr, idx);
+}
+
+
+var regex_class_vim2js = {
+  "\\v" : "",
+  "\\S" : "\\S",
+  "\\a" : "[A-Za-z]",
+  "\\d" : "\\d",
+  "\\h" : "[A-Za-z_]",
+  "\\s" : "\\s",
+  "\\w" : "[0-9A-Za-z_]",
+  "\\x" : "[0-9A-Fa-f]",
+  "\\<" : "\\b",
+  "\\>" : "\\b",
+  "\\?" : "?",
+  "\\=" : "?",
+  "\\*" : "*",
+  "\\+" : "+",
+  "+"   : "\\+",
+  "("   : "\\(",
+  ")"   : "\\)",
+  "\\\\"  : "\\\\",
+  // "\\." : "\\.",
+  "\\." : ".",
+  "\\{}" : "*",
+  "\\{-}" : "*?",
+  "\\%(" : "(", // TODO
+  "\\(" : "(",
+  "\\)" : ")",
+  "\\|" : "|",
+  "\\^" : "^",
+  "\\$" : "$"
+};
+
+var re_atom_array = new RegExp("^\\\\%\\[(.*)\\]$");
+// console.log(re_atom_array.exec("\\%[elete]")[1]);
+
+function regex_token_convert(token) {
+    if (regex_class_vim2js[token] !== undefined) {
+        return regex_class_vim2js[token];
+    }
+    else if (re_atom_array.exec(token)) {
+        // \%[abc] -> (abc|ab|a)
+        var atom = re_atom_array.exec(token)[1];
+        var patterns = atom.split('').reduce(function(prev, current) {
+            if (prev.length === 0)
+                prev.unshift(current);
+            else
+                prev.unshift(prev[0] + current);
+            return prev;
+        }, []);
+        return '(' + patterns.join('|') + ')';
+    }
+    else if (token.indexOf('\\[') === 0) {
+        return token.slice(1);
+    }
+    else if (token.indexOf('\\{') === 0) {
+        return token.slice(1);
+    }
+    else if (token.indexOf('\\') !== 0) {
+        return token;
+    }
+    console.log('not support: ' + token);
+    return token;
+}
+
+var endsWith = function(s, suffix) {
+    var sub = s.length - suffix.length;
+    return (sub >= 0) && (s.lastIndexOf(suffix) === sub);
+};
+
+function _vimlregex_to_jsregex(pattern) {
+    var reader = new StringReader(pattern);
+    var reg = new RegexpParser(reader);
+    var result = reg.parse_regexp();
+    return result.map(regex_token_convert).join("");
+}
+
+// var regex_cache = {};
+
+// function _vimlregex_to_jsregex(reg, s) {
+//   // regex_cache[reg] = s;
+//   // console.log(reg, s);
+//   return pat_vim2js[reg];
+// }
+
+exports._vimlregex_to_jsregex = _vimlregex_to_jsregex;
+
+// exports.vimlregex_debug = function() {
+//   return regex_cache;
+// };
+//command! -nargs=* JsCompilerVimOnly <args>
+//JsCompilerVimOnly call extend(s:, vimlparser#import())
+var constructor_functions_pattern = viml_join(["VimLParser", "ExprTokenizer", "ExprParser", "LvalueParser", "StringReader", "Compiler", "RegexpParser", "JavascriptCompiler"], "\\|");
+var opprec = {};
+opprec[NODE_TERNARY] = 1;
+opprec[NODE_OR] = 2;
+opprec[NODE_AND] = 3;
+opprec[NODE_EQUAL] = 4;
+opprec[NODE_EQUALCI] = 4;
+opprec[NODE_EQUALCS] = 4;
+opprec[NODE_NEQUAL] = 4;
+opprec[NODE_NEQUALCI] = 4;
+opprec[NODE_NEQUALCS] = 4;
+opprec[NODE_GREATER] = 4;
+opprec[NODE_GREATERCI] = 4;
+opprec[NODE_GREATERCS] = 4;
+opprec[NODE_GEQUAL] = 4;
+opprec[NODE_GEQUALCI] = 4;
+opprec[NODE_GEQUALCS] = 4;
+opprec[NODE_SMALLER] = 4;
+opprec[NODE_SMALLERCI] = 4;
+opprec[NODE_SMALLERCS] = 4;
+opprec[NODE_SEQUAL] = 4;
+opprec[NODE_SEQUALCI] = 4;
+opprec[NODE_SEQUALCS] = 4;
+opprec[NODE_MATCH] = 4;
+opprec[NODE_MATCHCI] = 4;
+opprec[NODE_MATCHCS] = 4;
+opprec[NODE_NOMATCH] = 4;
+opprec[NODE_NOMATCHCI] = 4;
+opprec[NODE_NOMATCHCS] = 4;
+opprec[NODE_IS] = 4;
+opprec[NODE_ISCI] = 4;
+opprec[NODE_ISCS] = 4;
+opprec[NODE_ISNOT] = 4;
+opprec[NODE_ISNOTCI] = 4;
+opprec[NODE_ISNOTCS] = 4;
+opprec[NODE_ADD] = 5;
+opprec[NODE_SUBTRACT] = 5;
+opprec[NODE_CONCAT] = 5;
+opprec[NODE_MULTIPLY] = 6;
+opprec[NODE_DIVIDE] = 6;
+opprec[NODE_REMAINDER] = 6;
+opprec[NODE_NOT] = 7;
+opprec[NODE_MINUS] = 7;
+opprec[NODE_PLUS] = 7;
+opprec[NODE_SUBSCRIPT] = 8;
+opprec[NODE_SLICE] = 8;
+opprec[NODE_CALL] = 8;
+opprec[NODE_DOT] = 8;
+opprec[NODE_NUMBER] = 9;
+opprec[NODE_STRING] = 9;
+opprec[NODE_LIST] = 9;
+opprec[NODE_DICT] = 9;
+opprec[NODE_OPTION] = 9;
+opprec[NODE_IDENTIFIER] = 9;
+opprec[NODE_CURLYNAME] = 9;
+opprec[NODE_ENV] = 9;
+opprec[NODE_REG] = 9;
+function JavascriptCompiler() { this.__init__.apply(this, arguments); }
+JavascriptCompiler.prototype.__init__ = function() {
+    this.indent = [""];
+    this.lines = [];
+}
+
+JavascriptCompiler.prototype.out = function() {
+    var a000 = Array.prototype.slice.call(arguments, 0);
+    if (viml_len(a000) == 1) {
+        if (viml_eqreg(a000[0], "^)\\+$")) {
+            this.lines[this.lines.length - 1] += a000[0];
+        }
+        else {
+            viml_add(this.lines, this.indent[0] + a000[0]);
+        }
+    }
+    else {
+        viml_add(this.lines, this.indent[0] + viml_printf.apply(null, a000));
+    }
+}
+
+JavascriptCompiler.prototype.emptyline = function() {
+    viml_add(this.lines, "");
+}
+
+JavascriptCompiler.prototype.incindent = function(s) {
+    viml_insert(this.indent, this.indent[0] + s);
+}
+
+JavascriptCompiler.prototype.decindent = function() {
+    viml_remove(this.indent, 0);
+}
+
+JavascriptCompiler.prototype.compile = function(node) {
+    if (node.type == NODE_TOPLEVEL) {
+        return this.compile_toplevel(node);
+    }
+    else if (node.type == NODE_COMMENT) {
+        return this.compile_comment(node);
+    }
+    else if (node.type == NODE_EXCMD) {
+        return this.compile_excmd(node);
+    }
+    else if (node.type == NODE_FUNCTION) {
+        return this.compile_function(node);
+    }
+    else if (node.type == NODE_DELFUNCTION) {
+        return this.compile_delfunction(node);
+    }
+    else if (node.type == NODE_RETURN) {
+        return this.compile_return(node);
+    }
+    else if (node.type == NODE_EXCALL) {
+        return this.compile_excall(node);
+    }
+    else if (node.type == NODE_LET) {
+        return this.compile_let(node);
+    }
+    else if (node.type == NODE_UNLET) {
+        return this.compile_unlet(node);
+    }
+    else if (node.type == NODE_LOCKVAR) {
+        return this.compile_lockvar(node);
+    }
+    else if (node.type == NODE_UNLOCKVAR) {
+        return this.compile_unlockvar(node);
+    }
+    else if (node.type == NODE_IF) {
+        return this.compile_if(node);
+    }
+    else if (node.type == NODE_WHILE) {
+        return this.compile_while(node);
+    }
+    else if (node.type == NODE_FOR) {
+        return this.compile_for(node);
+    }
+    else if (node.type == NODE_CONTINUE) {
+        return this.compile_continue(node);
+    }
+    else if (node.type == NODE_BREAK) {
+        return this.compile_break(node);
+    }
+    else if (node.type == NODE_TRY) {
+        return this.compile_try(node);
+    }
+    else if (node.type == NODE_THROW) {
+        return this.compile_throw(node);
+    }
+    else if (node.type == NODE_ECHO) {
+        return this.compile_echo(node);
+    }
+    else if (node.type == NODE_ECHON) {
+        return this.compile_echon(node);
+    }
+    else if (node.type == NODE_ECHOHL) {
+        return this.compile_echohl(node);
+    }
+    else if (node.type == NODE_ECHOMSG) {
+        return this.compile_echomsg(node);
+    }
+    else if (node.type == NODE_ECHOERR) {
+        return this.compile_echoerr(node);
+    }
+    else if (node.type == NODE_EXECUTE) {
+        return this.compile_execute(node);
+    }
+    else if (node.type == NODE_TERNARY) {
+        return this.compile_ternary(node);
+    }
+    else if (node.type == NODE_OR) {
+        return this.compile_or(node);
+    }
+    else if (node.type == NODE_AND) {
+        return this.compile_and(node);
+    }
+    else if (node.type == NODE_EQUAL) {
+        return this.compile_equal(node);
+    }
+    else if (node.type == NODE_EQUALCI) {
+        return this.compile_equalci(node);
+    }
+    else if (node.type == NODE_EQUALCS) {
+        return this.compile_equalcs(node);
+    }
+    else if (node.type == NODE_NEQUAL) {
+        return this.compile_nequal(node);
+    }
+    else if (node.type == NODE_NEQUALCI) {
+        return this.compile_nequalci(node);
+    }
+    else if (node.type == NODE_NEQUALCS) {
+        return this.compile_nequalcs(node);
+    }
+    else if (node.type == NODE_GREATER) {
+        return this.compile_greater(node);
+    }
+    else if (node.type == NODE_GREATERCI) {
+        return this.compile_greaterci(node);
+    }
+    else if (node.type == NODE_GREATERCS) {
+        return this.compile_greatercs(node);
+    }
+    else if (node.type == NODE_GEQUAL) {
+        return this.compile_gequal(node);
+    }
+    else if (node.type == NODE_GEQUALCI) {
+        return this.compile_gequalci(node);
+    }
+    else if (node.type == NODE_GEQUALCS) {
+        return this.compile_gequalcs(node);
+    }
+    else if (node.type == NODE_SMALLER) {
+        return this.compile_smaller(node);
+    }
+    else if (node.type == NODE_SMALLERCI) {
+        return this.compile_smallerci(node);
+    }
+    else if (node.type == NODE_SMALLERCS) {
+        return this.compile_smallercs(node);
+    }
+    else if (node.type == NODE_SEQUAL) {
+        return this.compile_sequal(node);
+    }
+    else if (node.type == NODE_SEQUALCI) {
+        return this.compile_sequalci(node);
+    }
+    else if (node.type == NODE_SEQUALCS) {
+        return this.compile_sequalcs(node);
+    }
+    else if (node.type == NODE_MATCH) {
+        return this.compile_match(node);
+    }
+    else if (node.type == NODE_MATCHCI) {
+        return this.compile_matchci(node);
+    }
+    else if (node.type == NODE_MATCHCS) {
+        return this.compile_matchcs(node);
+    }
+    else if (node.type == NODE_NOMATCH) {
+        return this.compile_nomatch(node);
+    }
+    else if (node.type == NODE_NOMATCHCI) {
+        return this.compile_nomatchci(node);
+    }
+    else if (node.type == NODE_NOMATCHCS) {
+        return this.compile_nomatchcs(node);
+    }
+    else if (node.type == NODE_IS) {
+        return this.compile_is(node);
+    }
+    else if (node.type == NODE_ISCI) {
+        return this.compile_isci(node);
+    }
+    else if (node.type == NODE_ISCS) {
+        return this.compile_iscs(node);
+    }
+    else if (node.type == NODE_ISNOT) {
+        return this.compile_isnot(node);
+    }
+    else if (node.type == NODE_ISNOTCI) {
+        return this.compile_isnotci(node);
+    }
+    else if (node.type == NODE_ISNOTCS) {
+        return this.compile_isnotcs(node);
+    }
+    else if (node.type == NODE_ADD) {
+        return this.compile_add(node);
+    }
+    else if (node.type == NODE_SUBTRACT) {
+        return this.compile_subtract(node);
+    }
+    else if (node.type == NODE_CONCAT) {
+        return this.compile_concat(node);
+    }
+    else if (node.type == NODE_MULTIPLY) {
+        return this.compile_multiply(node);
+    }
+    else if (node.type == NODE_DIVIDE) {
+        return this.compile_divide(node);
+    }
+    else if (node.type == NODE_REMAINDER) {
+        return this.compile_remainder(node);
+    }
+    else if (node.type == NODE_NOT) {
+        return this.compile_not(node);
+    }
+    else if (node.type == NODE_PLUS) {
+        return this.compile_plus(node);
+    }
+    else if (node.type == NODE_MINUS) {
+        return this.compile_minus(node);
+    }
+    else if (node.type == NODE_SUBSCRIPT) {
+        return this.compile_subscript(node);
+    }
+    else if (node.type == NODE_SLICE) {
+        return this.compile_slice(node);
+    }
+    else if (node.type == NODE_DOT) {
+        return this.compile_dot(node);
+    }
+    else if (node.type == NODE_CALL) {
+        return this.compile_call(node);
+    }
+    else if (node.type == NODE_NUMBER) {
+        return this.compile_number(node);
+    }
+    else if (node.type == NODE_STRING) {
+        return this.compile_string(node);
+    }
+    else if (node.type == NODE_LIST) {
+        return this.compile_list(node);
+    }
+    else if (node.type == NODE_DICT) {
+        return this.compile_dict(node);
+    }
+    else if (node.type == NODE_OPTION) {
+        return this.compile_option(node);
+    }
+    else if (node.type == NODE_IDENTIFIER) {
+        return this.compile_identifier(node);
+    }
+    else if (node.type == NODE_CURLYNAME) {
+        return this.compile_curlyname(node);
+    }
+    else if (node.type == NODE_ENV) {
+        return this.compile_env(node);
+    }
+    else if (node.type == NODE_REG) {
+        return this.compile_reg(node);
+    }
+    else {
+        throw this.err("Compiler: unknown node: %s", viml_string(node));
+    }
+}
+
+JavascriptCompiler.prototype.compile_body = function(body) {
+    var empty = 1;
+    var __c1 = body;
+    for (var __i1 = 0; __i1 < __c1.length; ++__i1) {
+        var node = __c1[__i1];
+        this.compile(node);
+        if (node.type != NODE_COMMENT) {
+            var empty = 0;
+        }
+    }
+}
+
+JavascriptCompiler.prototype.compile_toplevel = function(node) {
+    this.compile_body(node.body);
+    return this.lines;
+}
+
+JavascriptCompiler.prototype.compile_comment = function(node) {
+    this.out("//%s", node.str);
+}
+
+JavascriptCompiler.prototype.compile_excmd = function(node) {
+    this.out("//%s", node.str);
+    // throw 'NotImplemented: excmd'
+}
+
+JavascriptCompiler.prototype.compile_function = function(node) {
+    var left = this.compile(node.left);
+    var rlist = node.rlist.map((function(vval) { return this.compile(vval); }).bind(this));
+    var va = 0;
+    if (!viml_empty(rlist) && rlist[rlist.length - 1] == "...") {
+        delete rlist[rlist.length - 1];
+        var va = 1;
+    }
+    if (viml_eqreg(left, "^\\(" + constructor_functions_pattern + "\\)\\.")) {
+        var __tmp = viml_matchlist(left, "^\\(.*\\)\\.\\(.*\\)$");
+        var _0 = __tmp[0];
+        var klass = __tmp[1];
+        var name = __tmp[2];
+        var _ = __tmp.slice(3);
+        if (name == "new") {
+            return;
+        }
+        this.out("%s.prototype.%s = function(%s) {", klass, name, viml_join(rlist, ", "));
+        this.incindent("    ");
+        if (va) {
+            this.out("var a000 = Array.prototype.slice.call(arguments, %d);", viml_len(rlist));
+        }
+        this.compile_body(node.body);
+        this.decindent();
+        this.out("}");
+    }
+    else {
+        this.out("function %s(%s) {", left, viml_join(rlist, ", "));
+        this.incindent("    ");
+        if (va) {
+            this.out("var a000 = Array.prototype.slice.call(arguments, %d);", viml_len(rlist));
+        }
+        this.compile_body(node.body);
+        this.decindent();
+        this.out("}");
+    }
+    this.emptyline();
+}
+
+JavascriptCompiler.prototype.compile_delfunction = function(node) {
+    // throw 'NotImplemented: delfunction'
+    var list = node.list.map((function(vval) { return this.compile(vval); }).bind(this));
+    this.out("delete %s;", viml_join(list, ", "));
+}
+
+JavascriptCompiler.prototype.compile_return = function(node) {
+    if (node.left === NIL) {
+        this.out("return;");
+    }
+    else {
+        this.out("return %s;", this.compile(node.left));
+    }
+}
+
+JavascriptCompiler.prototype.compile_excall = function(node) {
+    this.out("%s;", this.compile(node.left));
+}
+
+JavascriptCompiler.prototype.compile_let = function(node) {
+    var op = node.op;
+    if (op == ".=") {
+        var op = "+=";
+    }
+    var right = this.compile(node.right);
+    if (node.left !== NIL) {
+        var left = this.compile(node.left);
+        if (left == "LvalueParser") {
+            this.out("function LvalueParser() { ExprParser.apply(this, arguments); this.__init__.apply(this, arguments); }");
+            this.out("LvalueParser.prototype = Object.create(ExprParser.prototype);");
+            return;
+        }
+        else if (viml_eqreg(left, "^\\(" + constructor_functions_pattern + "\\)$")) {
+            this.out("function %s() { this.__init__.apply(this, arguments); }", left);
+            return;
+        }
+        else if (viml_eqreg(left, "^\\(" + constructor_functions_pattern + "\\)\\.")) {
+            var __tmp = viml_matchlist(left, "^\\(.*\\)\\.\\(.*\\)$");
+            var _0 = __tmp[0];
+            var klass = __tmp[1];
+            var name = __tmp[2];
+            var _ = __tmp.slice(3);
+            this.out("%s.prototype.%s %s %s;", klass, name, op, right);
+            return;
+        }
+        // TODO use var only in variable decralation.
+        if (viml_eqreg(left, "\\.") || viml_eqreg(left, "\\[") || op != "=") {
+            this.out("%s %s %s;", left, op, right);
+        }
+        else {
+            this.out("var %s %s %s;", left, op, right);
+        }
+    }
+    else {
+        var list = node.list.map((function(vval) { return this.compile(vval); }).bind(this));
+        if (node.rest === NIL) {
+            var rest = NIL;
+        }
+        else {
+            var rest = this.compile(node.rest);
+        }
+        this.out("var __tmp = %s;", right);
+        var i = 0;
+        while (i < viml_len(list)) {
+            if (viml_eqreg(list[i], "\\.")) {
+                this.out("%s = __tmp[%s];", list[i], i);
+            }
+            else {
+                this.out("var %s = __tmp[%s];", list[i], i);
+            }
+            i += 1;
+        }
+        if (node.rest !== NIL) {
+            if (viml_eqreg(rest, "\\.")) {
+                this.out("%s = __tmp.slice(%d);", rest, i);
+            }
+            else {
+                this.out("var %s = __tmp.slice(%d);", rest, i);
+            }
+        }
+    }
+}
+
+JavascriptCompiler.prototype.compile_unlet = function(node) {
+    // TODO support unlet with slice.
+    // ex. `unlet list[0]` -> list.remove(0)
+    var list = node.list.map((function(vval) { return this.compile(vval); }).bind(this));
+    this.out("delete %s;", viml_join(list, ", "));
+}
+
+JavascriptCompiler.prototype.compile_lockvar = function(node) {
+    throw "NotImplemented: lockvar";
+}
+
+JavascriptCompiler.prototype.compile_unlockvar = function(node) {
+    throw "NotImplemented: unlockvar";
+}
+
+JavascriptCompiler.prototype.compile_if = function(node) {
+    this.out("if (%s) {", this.compile(node.cond));
+    this.incindent("    ");
+    this.compile_body(node.body);
+    this.decindent();
+    this.out("}");
+    var __c2 = node.elseif;
+    for (var __i2 = 0; __i2 < __c2.length; ++__i2) {
+        var node = __c2[__i2];
+        this.out("else if (%s) {", this.compile(node.cond));
+        this.incindent("    ");
+        this.compile_body(node.body);
+        this.decindent();
+        this.out("}");
+    }
+    if (node._else !== NIL) {
+        this.out("else {");
+        this.incindent("    ");
+        this.compile_body(node._else.body);
+        this.decindent();
+        this.out("}");
+    }
+}
+
+JavascriptCompiler.prototype.compile_while = function(node) {
+    this.out("while (%s) {", this.compile(node.cond));
+    this.incindent("    ");
+    this.compile_body(node.body);
+    this.decindent();
+    this.out("}");
+}
+
+var fori = 0;
+JavascriptCompiler.prototype.compile_for = function(node) {
+    fori += 1;
+    if (node.left !== NIL) {
+        var left = this.compile(node.left);
+    }
+    else {
+        var list = node.list.map((function(vval) { return this.compile(vval); }).bind(this));
+        if (node.rest === NIL) {
+            var rest = NIL;
+        }
+        else {
+            var rest = this.compile(node.rest);
+        }
+    }
+    var right = this.compile(node.right);
+    this.out("var __c%d = %s;", fori, right);
+    this.out("for (var __i%d = 0; __i%d < __c%d.length; ++__i%d) {", fori, fori, fori, fori);
+    this.incindent("    ");
+    if (node.left !== NIL) {
+        this.out("var %s = __c%d[__i%d];", left, fori, fori);
+    }
+    else {
+        var i = 0;
+        while (i < viml_len(list)) {
+            this.out("var %s = __c%d[__i%d][%d];", list[i], fori, fori, i);
+            i += 1;
+        }
+        if (node.rest !== NIL) {
+            this.out("var %s = __c%d[__i%d].slice(%d);", list[i], fori, fori, i);
+        }
+    }
+    this.compile_body(node.body);
+    this.decindent();
+    this.out("}");
+}
+
+JavascriptCompiler.prototype.compile_continue = function(node) {
+    this.out("continue;");
+}
+
+JavascriptCompiler.prototype.compile_break = function(node) {
+    this.out("break;");
+}
+
+JavascriptCompiler.prototype.compile_try = function(node) {
+    this.out("try {");
+    this.incindent("    ");
+    this.compile_body(node.body);
+    this.decindent();
+    this.out("}");
+    var __c3 = node.catch;
+    for (var __i3 = 0; __i3 < __c3.length; ++__i3) {
+        var node = __c3[__i3];
+        if (node.pattern !== NIL) {
+            // re-throw if pattern not matched..
+            this.out("catch (e) {");
+            this.incindent("    ");
+            this.compile_body(node.body);
+            this.decindent();
+            this.out("}");
+        }
+        else {
+            this.out("catch (e) {");
+            this.incindent("    ");
+            this.compile_body(node.body);
+            this.decindent();
+            this.out("}");
+        }
+    }
+    if (node._finally !== NIL) {
+        this.out("finally {");
+        this.incindent("    ");
+        this.compile_body(node._finally.body);
+        this.decindent();
+        this.out("}");
+    }
+}
+
+JavascriptCompiler.prototype.compile_throw = function(node) {
+    this.out("throw %s;", this.compile(node.left));
+}
+
+JavascriptCompiler.prototype.compile_echo = function(node) {
+    var list = node.list.map((function(vval) { return this.compile(vval); }).bind(this));
+    this.out("process.stdout.write(%s + \"\\n\");", viml_join(list, ", "));
+}
+
+JavascriptCompiler.prototype.compile_echon = function(node) {
+    var list = node.list.map((function(vval) { return this.compile(vval); }).bind(this));
+    this.out("process.stdout.write(%s + \"\\n\");", viml_join(list, ", "));
+}
+
+JavascriptCompiler.prototype.compile_echohl = function(node) {
+    throw "NotImplemented: echohl";
+}
+
+JavascriptCompiler.prototype.compile_echomsg = function(node) {
+    var list = node.list.map((function(vval) { return this.compile(vval); }).bind(this));
+    this.out("process.stdout.write(%s + \"\\n\");", viml_join(list, ", "));
+}
+
+JavascriptCompiler.prototype.compile_echoerr = function(node) {
+    var list = node.list.map((function(vval) { return this.compile(vval); }).bind(this));
+    this.out("throw %s;", viml_join(list, ", "));
+}
+
+JavascriptCompiler.prototype.compile_execute = function(node) {
+    throw "NotImplemented: execute";
+}
+
+JavascriptCompiler.prototype.compile_ternary = function(node) {
+    var cond = this.compile(node.cond);
+    if (opprec[node.type] >= opprec[node.cond.type]) {
+        var cond = "(" + cond + ")";
+    }
+    var left = this.compile(node.left);
+    var right = this.compile(node.right);
+    return viml_printf("%s ? %s : %s", cond, left, right);
+}
+
+JavascriptCompiler.prototype.compile_or = function(node) {
+    return this.compile_op2(node, "||");
+}
+
+JavascriptCompiler.prototype.compile_and = function(node) {
+    return this.compile_op2(node, "&&");
+}
+
+JavascriptCompiler.prototype.compile_equal = function(node) {
+    return this.compile_op2(node, "==");
+}
+
+JavascriptCompiler.prototype.compile_equalci = function(node) {
+    return viml_printf("viml_equalci(%s, %s)", this.compile(node.left), this.compile(node.right));
+}
+
+JavascriptCompiler.prototype.compile_equalcs = function(node) {
+    return this.compile_op2(node, "==");
+}
+
+JavascriptCompiler.prototype.compile_nequal = function(node) {
+    return this.compile_op2(node, "!=");
+}
+
+JavascriptCompiler.prototype.compile_nequalci = function(node) {
+    return viml_printf("!viml_equalci(%s, %s)", this.compile(node.left), this.compile(node.right));
+}
+
+JavascriptCompiler.prototype.compile_nequalcs = function(node) {
+    return this.compile_op2(node, "!=");
+}
+
+JavascriptCompiler.prototype.compile_greater = function(node) {
+    return this.compile_op2(node, ">");
+}
+
+JavascriptCompiler.prototype.compile_greaterci = function(node) {
+    throw "NotImplemented: >?";
+}
+
+JavascriptCompiler.prototype.compile_greatercs = function(node) {
+    throw "NotImplemented: >#";
+}
+
+JavascriptCompiler.prototype.compile_gequal = function(node) {
+    return this.compile_op2(node, ">=");
+}
+
+JavascriptCompiler.prototype.compile_gequalci = function(node) {
+    throw "NotImplemented: >=?";
+}
+
+JavascriptCompiler.prototype.compile_gequalcs = function(node) {
+    throw "NotImplemented: >=#";
+}
+
+JavascriptCompiler.prototype.compile_smaller = function(node) {
+    return this.compile_op2(node, "<");
+}
+
+JavascriptCompiler.prototype.compile_smallerci = function(node) {
+    throw "NotImplemented: <?";
+}
+
+JavascriptCompiler.prototype.compile_smallercs = function(node) {
+    throw "NotImplemented: <#";
+}
+
+JavascriptCompiler.prototype.compile_sequal = function(node) {
+    return this.compile_op2(node, "<=");
+}
+
+JavascriptCompiler.prototype.compile_sequalci = function(node) {
+    throw "NotImplemented: <=?";
+}
+
+JavascriptCompiler.prototype.compile_sequalcs = function(node) {
+    throw "NotImplemented: <=#";
+}
+
+JavascriptCompiler.prototype.compile_match = function(node) {
+    return viml_printf("viml_eqreg(%s, %s)", this.compile(node.left), this.compile(node.right));
+}
+
+JavascriptCompiler.prototype.compile_matchci = function(node) {
+    return viml_printf("viml_eqregq(%s, %s)", this.compile(node.left), this.compile(node.right));
+}
+
+JavascriptCompiler.prototype.compile_matchcs = function(node) {
+    return viml_printf("viml_eqregh(%s, %s)", this.compile(node.left), this.compile(node.right));
+}
+
+JavascriptCompiler.prototype.compile_nomatch = function(node) {
+    return viml_printf("!viml_eqreg(%s, %s)", this.compile(node.left), this.compile(node.right));
+}
+
+JavascriptCompiler.prototype.compile_nomatchci = function(node) {
+    return viml_printf("!viml_eqregq(%s, %s)", this.compile(node.left), this.compile(node.right));
+}
+
+JavascriptCompiler.prototype.compile_nomatchcs = function(node) {
+    return viml_printf("!viml_eqregh(%s, %s)", this.compile(node.left), this.compile(node.right));
+}
+
+// TODO
+JavascriptCompiler.prototype.compile_is = function(node) {
+    return this.compile_op2(node, "===");
+}
+
+JavascriptCompiler.prototype.compile_isci = function(node) {
+    throw "NotImplemented: is?";
+}
+
+JavascriptCompiler.prototype.compile_iscs = function(node) {
+    throw "NotImplemented: is#";
+}
+
+JavascriptCompiler.prototype.compile_isnot = function(node) {
+    return this.compile_op2(node, "!==");
+}
+
+JavascriptCompiler.prototype.compile_isnotci = function(node) {
+    throw "NotImplemented: isnot?";
+}
+
+JavascriptCompiler.prototype.compile_isnotcs = function(node) {
+    throw "NotImplemented: isnot#";
+}
+
+JavascriptCompiler.prototype.compile_add = function(node) {
+    return this.compile_op2(node, "+");
+}
+
+JavascriptCompiler.prototype.compile_subtract = function(node) {
+    return this.compile_op2(node, "-");
+}
+
+JavascriptCompiler.prototype.compile_concat = function(node) {
+    return this.compile_op2(node, "+");
+}
+
+JavascriptCompiler.prototype.compile_multiply = function(node) {
+    return this.compile_op2(node, "*");
+}
+
+JavascriptCompiler.prototype.compile_divide = function(node) {
+    return this.compile_op2(node, "/");
+}
+
+JavascriptCompiler.prototype.compile_remainder = function(node) {
+    return this.compile_op2(node, "%");
+}
+
+JavascriptCompiler.prototype.compile_not = function(node) {
+    return this.compile_op1(node, "!");
+}
+
+JavascriptCompiler.prototype.compile_plus = function(node) {
+    return this.compile_op1(node, "+");
+}
+
+JavascriptCompiler.prototype.compile_minus = function(node) {
+    return this.compile_op1(node, "-");
+}
+
+JavascriptCompiler.prototype.compile_subscript = function(node) {
+    var left = this.compile(node.left);
+    var right = this.compile(node.right);
+    if (right[0] == "-") {
+        var right = viml_matchstr(right, "-\\zs.*");
+        return viml_printf("%s[%s.length - %s]", left, left, right);
+    }
+    else {
+        return viml_printf("%s[%s]", left, right);
+    }
+}
+
+JavascriptCompiler.prototype.compile_slice = function(node) {
+    // throw 'NotImplemented: slice'
+    var r0 = node.rlist[0] === NIL ? NIL : this.compile(node.rlist[0]);
+    var r1 = node.rlist[1] === NIL ? NIL : this.compile(node.rlist[1]);
+    if (r0 !== NIL && r1 !== NIL) {
+        return viml_printf("%s.slice(%s, %s)", this.compile(node.left), r0, r1);
+    }
+    else if (r0 !== NIL && r1 === NIL) {
+        return viml_printf("%s.slice(%s)", this.compile(node.left), r0);
+    }
+    else if (r0 === NIL && r1 !== NIL) {
+        return viml_printf("%s.slice(0, %s)", this.compile(node.left), r1);
+    }
+    else {
+        return viml_printf("%s.slice(0)", this.compile(node.left));
+    }
+}
+
+JavascriptCompiler.prototype.compile_dot = function(node) {
+    var left = this.compile(node.left);
+    var right = this.compile(node.right);
+    if (viml_eqreg(right, "^\\(else\\|finally\\)$")) {
+        var right = "_" + right;
+    }
+    return viml_printf("%s.%s", left, right);
+}
+
+JavascriptCompiler.prototype.compile_call = function(node) {
+    var rlist = node.rlist.map((function(vval) { return this.compile(vval); }).bind(this));
+    var left = this.compile(node.left);
+    if (left == "map") {
+        var r = new StringReader([viml_eval(rlist[1])]);
+        var p = new ExprParser(r);
+        var n = p.parse();
+        return viml_printf("%s.map((function(vval) { return %s; }).bind(this))", rlist[0], this.compile(n));
+    }
+    else if (left == "call" && viml_eqreg(rlist[0][0], "['\"]")) {
+        return viml_printf("viml_%s.apply(null, %s)", rlist[0].slice(1, -2), rlist[1]);
+    }
+    var isnew = 0;
+    if (viml_eqreg(left, "\\.new$")) {
+        var left = viml_matchstr(left, ".*\\ze\\.new$");
+        var isnew = 1;
+    }
+    if (viml_index(viml_builtin_functions, left) != -1) {
+        var left = viml_printf("viml_%s", left);
+    }
+    if (isnew) {
+        return viml_printf("new %s(%s)", left, viml_join(rlist, ", "));
+    }
+    else {
+        return viml_printf("%s(%s)", left, viml_join(rlist, ", "));
+    }
+}
+
+JavascriptCompiler.prototype.compile_number = function(node) {
+    return node.value;
+}
+
+JavascriptCompiler.prototype.compile_string = function(node) {
+    if (node.value[0] == "'") {
+        var s = viml_substitute(node.value.slice(1, -2), "''", "'", "g");
+        return "\"" + viml_escape(s, "\\\"") + "\"";
+    }
+    else {
+        return node.value;
+    }
+}
+
+JavascriptCompiler.prototype.compile_list = function(node) {
+    var value = node.value.map((function(vval) { return this.compile(vval); }).bind(this));
+    if (viml_empty(value)) {
+        return "[]";
+    }
+    else {
+        return viml_printf("[%s]", viml_join(value, ", "));
+    }
+}
+
+JavascriptCompiler.prototype.compile_dict = function(node) {
+    var value = node.value.map((function(vval) { return this.compile(vval[0]) + ":" + this.compile(vval[1]); }).bind(this));
+    if (viml_empty(value)) {
+        return "{}";
+    }
+    else {
+        return viml_printf("{%s}", viml_join(value, ", "));
+    }
+}
+
+JavascriptCompiler.prototype.compile_option = function(node) {
+    // throw 'NotImplemented: option'
+    if (viml_stridx(node.value, "&g:") == 0) {
+        // TODO lvalue?
+        return "Vim.Option." + node.value.slice(3);
+    }
+    else if (viml_stridx(node.value, "&l:") == 0) {
+        return "Vim.Option." + node.value.slice(3);
+    }
+    else {
+        return "Vim.Option." + node.value.slice(1);
+    }
+}
+
+JavascriptCompiler.prototype.compile_identifier = function(node) {
+    var name = node.value;
+    if (name == "a:000") {
+        var name = "a000";
+    }
+    else if (name == "v:val") {
+        var name = "vval";
+    }
+    else if (name == "g:") {
+        var name = "global";
+    }
+    else if (name == "s:") {
+        var name = "exports";
+    }
+    else if (name == "a:") {
+        // let name = 'callee.arguments'
+        var name = "arguments";
+    }
+    else if (viml_eqreg(name, "^v:")) {
+        var name = "Vim.DefinedVariables." + name.slice(2);
+    }
+    else if (viml_eqreg(name, "^t:")) {
+        var name = "Vim.TabVar." + name.slice(2);
+    }
+    else if (viml_eqreg(name, "^w:")) {
+        var name = "Vim.WindowVar." + name.slice(2);
+    }
+    else if (viml_eqreg(name, "^b:")) {
+        var name = "Vim.BufferVar." + name.slice(2);
+    }
+    else if (viml_eqreg(name, "^g:")) {
+        var name = viml_substitute(name, "#", "$", "g");
+        var name = "global." + name.slice(2);
+    }
+    else if (viml_eqreg(name, "^[sa]:")) {
+        var name = name.slice(2);
+    }
+    else if (viml_eqreg(name, "#")) {
+        var name = viml_substitute(name, "#", "$", "g");
+    }
+    else if (name == "self") {
+        var name = "this";
+    }
+    return name;
+}
+
+JavascriptCompiler.prototype.compile_curlyname = function(node) {
+    throw "NotImplemented: curlyname";
+}
+
+JavascriptCompiler.prototype.compile_env = function(node) {
+    throw "NotImplemented: env";
+}
+
+JavascriptCompiler.prototype.compile_reg = function(node) {
+    throw "NotImplemented: reg";
+}
+
+JavascriptCompiler.prototype.compile_op1 = function(node, op) {
+    var left = this.compile(node.left);
+    if (opprec[node.type] > opprec[node.left.type]) {
+        var left = "(" + left + ")";
+    }
+    return viml_printf("%s%s", op, left);
+}
+
+JavascriptCompiler.prototype.compile_op2 = function(node, op) {
+    var left = this.compile(node.left);
+    if (opprec[node.type] > opprec[node.left.type]) {
+        var left = "(" + left + ")";
+    }
+    var right = this.compile(node.right);
+    if (opprec[node.type] > opprec[node.right.type]) {
+        var right = "(" + right + ")";
+    }
+    return viml_printf("%s %s %s", left, op, right);
+}
+
+var viml_builtin_functions = ["abs", "acos", "add", "and", "append", "append", "argc", "argidx", "argv", "argv", "asin", "atan", "atan2", "browse", "browsedir", "bufexists", "buflisted", "bufloaded", "bufname", "bufnr", "bufwinnr", "byte2line", "byteidx", "call", "ceil", "changenr", "char2nr", "cindent", "clearmatches", "col", "complete", "complete_add", "complete_check", "confirm", "copy", "cos", "cosh", "count", "cscope_connection", "cursor", "cursor", "deepcopy", "delete", "did_filetype", "diff_filler", "diff_hlID", "empty", "escape", "eval", "eventhandler", "executable", "exists", "extend", "exp", "expand", "feedkeys", "filereadable", "filewritable", "filter", "finddir", "findfile", "float2nr", "floor", "fmod", "fnameescape", "fnamemodify", "foldclosed", "foldclosedend", "foldlevel", "foldtext", "foldtextresult", "foreground", "function", "garbagecollect", "get", "get", "getbufline", "getbufvar", "getchar", "getcharmod", "getcmdline", "getcmdpos", "getcmdtype", "getcwd", "getfperm", "getfsize", "getfontname", "getftime", "getftype", "getline", "getline", "getloclist", "getmatches", "getpid", "getpos", "getqflist", "getreg", "getregtype", "gettabvar", "gettabwinvar", "getwinposx", "getwinposy", "getwinvar", "glob", "globpath", "has", "has_key", "haslocaldir", "hasmapto", "histadd", "histdel", "histget", "histnr", "hlexists", "hlID", "hostname", "iconv", "indent", "index", "input", "inputdialog", "inputlist", "inputrestore", "inputsave", "inputsecret", "insert", "invert", "isdirectory", "islocked", "items", "join", "keys", "len", "libcall", "libcallnr", "line", "line2byte", "lispindent", "localtime", "log", "log10", "luaeval", "map", "maparg", "mapcheck", "match", "matchadd", "matcharg", "matchdelete", "matchend", "matchlist", "matchstr", "max", "min", "mkdir", "mode", "mzeval", "nextnonblank", "nr2char", "or", "pathshorten", "pow", "prevnonblank", "printf", "pumvisible", "pyeval", "py3eval", "range", "readfile", "reltime", "reltimestr", "remote_expr", "remote_foreground", "remote_peek", "remote_read", "remote_send", "remove", "remove", "rename", "repeat", "resolve", "reverse", "round", "screencol", "screenrow", "search", "searchdecl", "searchpair", "searchpairpos", "searchpos", "server2client", "serverlist", "setbufvar", "setcmdpos", "setline", "setloclist", "setmatches", "setpos", "setqflist", "setreg", "settabvar", "settabwinvar", "setwinvar", "sha256", "shellescape", "shiftwidth", "simplify", "sin", "sinh", "sort", "soundfold", "spellbadword", "spellsuggest", "split", "sqrt", "str2float", "str2nr", "strchars", "strdisplaywidth", "strftime", "stridx", "string", "strlen", "strpart", "strridx", "strtrans", "strwidth", "submatch", "substitute", "synID", "synIDattr", "synIDtrans", "synconcealed", "synstack", "system", "tabpagebuflist", "tabpagenr", "tabpagewinnr", "taglist", "tagfiles", "tempname", "tan", "tanh", "tolower", "toupper", "tr", "trunc", "type", "undofile", "undotree", "values", "virtcol", "visualmode", "wildmenumode", "winbufnr", "wincol", "winheight", "winline", "winnr", "winrestcmd", "winrestview", "winsaveview", "winwidth", "writefile", "xor"];
+function test() {
+    var vimfile = "autoload/vimlparser.vim";
+    var pyfile = "js/vimlparser.js";
+    var vimlfunc = "js/vimlfunc.js";
+    var head = viml_readfile(vimlfunc);
+    try {
+        var r = new StringReader(viml_readfile(vimfile));
+        var p = new VimLParser();
+        var c = new JavascriptCompiler();
+        var lines = c.compile(p.parse(r));
+        delete lines.slice(0, viml_index(lines, "var NIL = [];") - 1);
+        viml_writefile(head + lines + ["", "main()"], pyfile);
+    }
+    catch (e) {
+        throw viml_substitute(Vim.DefinedVariables.throwpoint, "\\.\\.\\zs\\d\\+", "\\=s:numtoname(submatch(0))", "g") + "\n" + Vim.DefinedVariables.exception;
+    }
+}
+
+function numtoname(num) {
+    var sig = viml_printf("function('%s')", num);
+    var __c4 = viml_keys(exports);
+    for (var __i4 = 0; __i4 < __c4.length; ++__i4) {
+        var k = __c4[__i4];
+        if (viml_type(exports[k]) == viml_type({})) {
+            var __c5 = viml_keys(exports[k]);
+            for (var __i5 = 0; __i5 < __c5.length; ++__i5) {
+                var name = __c5[__i5];
+                if (viml_type(exports[k][name]) == viml_type(viml_function("tr")) && viml_string(exports[k][name]) == sig) {
+                    return viml_printf("%s.%s", k, name);
+                }
+            }
+        }
+    }
+    return num;
+}
+
+// call s:test()
+function JsCompilerImport() {
+    return exports;
+}
+
+exports.StringReader = StringReader;
+exports.VimLParser = VimLParser;
+exports.Compiler = Compiler;
+exports.RegexpParser = RegexpParser;
+exports.JavascriptCompiler = JavascriptCompiler;
